@@ -23,9 +23,9 @@ import {
   OfflineDataManager,
 } from "./offline-data"
 
-const supabaseUrl = "https://dvanjyclijkibikfvagl.supabase.co"
+const supabaseUrl = "https://iehlibnauegluxbgvuso.supabase.co"
 const supabaseAnonKey =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2YW5qeWNsaWpraWJpa2Z2YWdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDcxNjYwNTAsImV4cCI6MjA2Mjc0MjA1MH0.Dv26rQqtPZrgBCfUknPiXFbVAKZjIWYulIa4srlasZk"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllaGxpYm5hdWVnbHV4Ymd2dXNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ4NzYwODMsImV4cCI6MjA2MDQ1MjA4M30.M0JZPk0xfcSCeN56Nb3MGwfE2dEhHomeDdJQbYi8SP8"
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
