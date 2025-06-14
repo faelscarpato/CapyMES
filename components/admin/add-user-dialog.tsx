@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Eye, EyeOff } from "lucide-react"
+import { Eye, EyeOff, Wifi, WifiOff } from "lucide-react"
+import { useConnection } from "@/lib/connection-context"
+import { createUserWithPassword } from "@/lib/supabase"
 import type { User } from "@/lib/types"
 
 interface AddUserDialogProps {
@@ -18,9 +20,11 @@ interface AddUserDialogProps {
 }
 
 export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialogProps) {
+  const { isOnline } = useConnection()
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -41,6 +45,7 @@ export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialog
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    setSuccess("")
 
     // Validações
     if (!formData.name.trim()) {
@@ -76,38 +81,50 @@ export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialog
     setLoading(true)
 
     try {
-      const newUser: User = {
-        id: `user-${Date.now()}`,
-        name: formData.name.trim(),
-        email: formData.email.trim().toLowerCase(),
-        role: formData.role,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
+      console.log("🔄 Criando usuário...", { isOnline })
 
-      // Salvar senha separadamente (em produção seria hash)
-      const userPasswords = JSON.parse(localStorage.getItem("capymes_passwords") || "{}")
-      userPasswords[newUser.email] = formData.password
-      localStorage.setItem("capymes_passwords", JSON.stringify(userPasswords))
-
-      onUserAdded(newUser)
-
-      // Reset form
-      setFormData({
-        name: "",
-        email: "",
-        role: "operator",
-        password: "",
-        confirmPassword: "",
-      })
-
-      alert(
-        `Usuário criado com sucesso!\n\nEmail: ${newUser.email}\nSenha: ${formData.password}\n\nAnote essas credenciais para o usuário.`,
+      // Criar usuário usando a nova API
+      const result = await createUserWithPassword(
+        {
+          name: formData.name.trim(),
+          email: formData.email.trim().toLowerCase(),
+          role: formData.role,
+        },
+        formData.password,
+        isOnline,
       )
-      onOpenChange(false)
+
+      if (result.success) {
+        console.log("✅ Usuário criado com sucesso:", result.user)
+
+        // Notificar o componente pai
+        onUserAdded(result.user)
+
+        // Mostrar mensagem de sucesso
+        setSuccess(result.message)
+
+        // Reset form
+        setFormData({
+          name: "",
+          email: "",
+          role: "operator",
+          password: "",
+          confirmPassword: "",
+        })
+
+        // Mostrar credenciais para o administrador
+        const credentialsMessage = `Usuário criado com sucesso!\n\n📧 Email: ${result.user.email}\n🔑 Senha: ${formData.password}\n\n${result.message}\n\nAnote essas credenciais para o usuário.`
+
+        setTimeout(() => {
+          alert(credentialsMessage)
+          onOpenChange(false)
+        }, 1000)
+      } else {
+        setError(result.message)
+      }
     } catch (error) {
       console.error("Erro ao criar usuário:", error)
-      setError("Erro ao criar usuário. Tente novamente.")
+      setError("Erro inesperado ao criar usuário. Tente novamente.")
     } finally {
       setLoading(false)
     }
@@ -117,7 +134,20 @@ export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialog
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Novo Usuário</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            Novo Usuário
+            {isOnline ? (
+              <div className="flex items-center gap-1 text-green-600">
+                <Wifi className="w-4 h-4" />
+                <span className="text-xs">Online</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 text-orange-600">
+                <WifiOff className="w-4 h-4" />
+                <span className="text-xs">Offline</span>
+              </div>
+            )}
+          </DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -126,6 +156,23 @@ export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialog
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+
+          {success && (
+            <Alert className="border-green-200 bg-green-50">
+              <AlertDescription className="text-green-800">{success}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* Status de Conexão */}
+          <div
+            className={`text-xs p-2 rounded ${isOnline ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-700"}`}
+          >
+            {isOnline ? (
+              <span>✅ Usuário será salvo no Supabase (nuvem)</span>
+            ) : (
+              <span>⚠️ Usuário será salvo localmente (offline)</span>
+            )}
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="name">Nome Completo *</Label>
@@ -159,7 +206,7 @@ export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialog
               <SelectContent>
                 <SelectItem value="operator">Operador</SelectItem>
                 <SelectItem value="supervisor">Supervisor</SelectItem>
-                <SelectItem value="quality">Qualidade</SelectItem>
+                <SelectItem value="quality">Qual idade</SelectItem>
                 <SelectItem value="maintenance">Manutenção</SelectItem>
                 <SelectItem value="admin">Administrador</SelectItem>
               </SelectContent>
@@ -179,17 +226,18 @@ export function AddUserDialog({ open, onOpenChange, onUserAdded }: AddUserDialog
                 type={showPassword ? "text" : "password"}
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Digite a senha"
+                placeholder="Digite a senha (min. 6 caracteres)"
                 required
+                minLength={6}
               />
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                className="absolute right-0 top-0 h-full px-3"
                 onClick={() => setShowPassword(!showPassword)}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </Button>
             </div>
           </div>

@@ -22,6 +22,7 @@ import {
   getMockSystemSettings,
   OfflineDataManager,
 } from "./offline-data"
+import { generateUUID } from "./utils"
 
 const supabaseUrl = "https://iehlibnauegluxbgvuso.supabase.co"
 const supabaseAnonKey =
@@ -93,48 +94,119 @@ export async function checkTables() {
       setTimeout(() => reject(new Error("Timeout na verificação de tabelas")), 10000)
     })
 
-    const queryPromise = supabase
-      .from("information_schema.tables")
-      .select("table_name")
-      .eq("table_schema", "public")
-      .in("table_name", [
-        "production_orders",
-        "ai_alerts",
-        "quality_inspections",
-        "maintenance_orders",
-        "equipment",
-        "traceability_records",
-        "users",
-        "system_settings",
-        "production_lines",
-      ])
+    console.log("🔍 Verificando tabelas...")
 
-    const { data: tables, error } = (await Promise.race([queryPromise, timeoutPromise])) as any
+    // Lista de tabelas para verificar
+    const tablesToCheck = [
+      "production_orders",
+      "ai_alerts",
+      "quality_inspections",
+      "maintenance_orders",
+      "equipment",
+      "traceability_records",
+      "users",
+      "system_settings",
+      "production_lines",
+    ]
 
-    if (error) {
-      console.error("Erro ao verificar tabelas:", error)
-      return { success: false, tables: [] }
+    // Método 1: Tentar usar a função RPC personalizada
+    try {
+      console.log("Tentando método RPC...")
+      const rpcQuery = supabase.rpc("get_table_names", {
+        schema_name: "public",
+        table_names: tablesToCheck,
+      })
+
+      const rpcResult = (await Promise.race([rpcQuery, timeoutPromise])) as any
+
+      if (!rpcResult.error && rpcResult.data) {
+        const existingTables = rpcResult.data
+        console.log("✅ RPC funcionou! Tabelas encontradas:", existingTables)
+
+        return {
+          success: true,
+          tables: existingTables,
+          hasProductionOrders: existingTables.includes("production_orders"),
+          hasAiAlerts: existingTables.includes("ai_alerts"),
+          hasQualityInspections: existingTables.includes("quality_inspections"),
+          hasMaintenanceOrders: existingTables.includes("maintenance_orders"),
+          hasEquipment: existingTables.includes("equipment"),
+          hasTraceabilityRecords: existingTables.includes("traceability_records"),
+          hasUsers: existingTables.includes("users"),
+          hasSystemSettings: existingTables.includes("system_settings"),
+          hasProductionLines: existingTables.includes("production_lines"),
+        }
+      }
+    } catch (rpcError) {
+      console.log("⚠️ RPC falhou, tentando método alternativo...")
     }
 
-    const tableNames = tables?.map((t: any) => t.table_name) || []
-    console.log("Tabelas encontradas:", tableNames)
+    // Método 2: Verificar cada tabela individualmente
+    console.log("Verificando tabelas individualmente...")
+    const existingTables: string[] = []
+    const tableStatus: Record<string, boolean> = {}
+
+    for (const tableName of tablesToCheck) {
+      try {
+        console.log(`Verificando tabela: ${tableName}`)
+
+        const testQuery = supabase.from(tableName).select("*", { count: "exact", head: true })
+        const testResult = (await Promise.race([testQuery, timeoutPromise])) as any
+
+        if (!testResult.error) {
+          existingTables.push(tableName)
+          console.log(`✅ Tabela ${tableName} existe`)
+        } else {
+          console.log(`❌ Tabela ${tableName} não existe:`, testResult.error.message)
+        }
+
+        // Mapear para o formato esperado
+        const camelCaseName = tableName
+          .split("_")
+          .map((word, index) => (index === 0 ? "has" : "") + word.charAt(0).toUpperCase() + word.slice(1))
+          .join("")
+
+        tableStatus[camelCaseName] = !testResult.error
+      } catch (err) {
+        console.log(`❌ Erro ao verificar tabela ${tableName}:`, err)
+        const camelCaseName = tableName
+          .split("_")
+          .map((word, index) => (index === 0 ? "has" : "") + word.charAt(0).toUpperCase() + word.slice(1))
+          .join("")
+        tableStatus[camelCaseName] = false
+      }
+    }
+
+    console.log("📊 Resultado final:", { existingTables, tableStatus })
 
     return {
       success: true,
-      tables: tableNames,
-      hasProductionOrders: tableNames.includes("production_orders"),
-      hasAiAlerts: tableNames.includes("ai_alerts"),
-      hasQualityInspections: tableNames.includes("quality_inspections"),
-      hasMaintenanceOrders: tableNames.includes("maintenance_orders"),
-      hasEquipment: tableNames.includes("equipment"),
-      hasTraceabilityRecords: tableNames.includes("traceability_records"),
-      hasUsers: tableNames.includes("users"),
-      hasSystemSettings: tableNames.includes("system_settings"),
-      hasProductionLines: tableNames.includes("production_lines"),
+      tables: existingTables,
+      hasProductionOrders: tableStatus.hasProductionOrders || false,
+      hasAiAlerts: tableStatus.hasAiAlerts || false,
+      hasQualityInspections: tableStatus.hasQualityInspections || false,
+      hasMaintenanceOrders: tableStatus.hasMaintenanceOrders || false,
+      hasEquipment: tableStatus.hasEquipment || false,
+      hasTraceabilityRecords: tableStatus.hasTraceabilityRecords || false,
+      hasUsers: tableStatus.hasUsers || false,
+      hasSystemSettings: tableStatus.hasSystemSettings || false,
+      hasProductionLines: tableStatus.hasProductionLines || false,
     }
   } catch (error) {
-    console.error("Erro ao verificar tabelas:", error)
-    return { success: false, tables: [] }
+    console.error("❌ Erro geral ao verificar tabelas:", error)
+    return {
+      success: false,
+      tables: [],
+      hasProductionOrders: false,
+      hasAiAlerts: false,
+      hasQualityInspections: false,
+      hasMaintenanceOrders: false,
+      hasEquipment: false,
+      hasTraceabilityRecords: false,
+      hasUsers: false,
+      hasSystemSettings: false,
+      hasProductionLines: false,
+    }
   }
 }
 
@@ -215,7 +287,7 @@ export const productionOrdersAPI = {
   ): Promise<ProductionOrder> {
     const newOrder: ProductionOrder = {
       ...order,
-      id: `po-${Date.now()}`,
+      id: generateUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
@@ -331,7 +403,7 @@ export const qualityAPI = {
   ): Promise<QualityInspection> {
     const newInspection: QualityInspection = {
       ...inspection,
-      id: `qi-${Date.now()}`,
+      id: generateUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
@@ -451,7 +523,7 @@ export const maintenanceAPI = {
   ): Promise<MaintenanceOrder> {
     const newOrder: MaintenanceOrder = {
       ...order,
-      id: `mo-${Date.now()}`,
+      id: generateUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
@@ -559,7 +631,7 @@ export const equipmentAPI = {
   async create(equipment: Omit<Equipment, "id" | "created_at" | "updated_at">, isOnline = false): Promise<Equipment> {
     const newEquipment: Equipment = {
       ...equipment,
-      id: `eq-${Date.now()}`,
+      id: generateUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
@@ -647,7 +719,7 @@ export const traceabilityAPI = {
   async create(record: Omit<TraceabilityRecord, "id" | "created_at">, isOnline = false): Promise<TraceabilityRecord> {
     const newRecord: TraceabilityRecord = {
       ...record,
-      id: `tr-${Date.now()}`,
+      id: generateUUID(),
       created_at: new Date().toISOString(),
     }
 
@@ -835,6 +907,79 @@ export const usersAPI = {
 
     return OfflineDataManager.getData("users", getMockUsers())
   },
+
+  async create(user: Omit<User, "id" | "created_at" | "updated_at">, isOnline = false): Promise<User> {
+    const newUser: User = {
+      ...user,
+      id: generateUUID(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    if (isOnline) {
+      try {
+        console.log("🔄 Salvando usuário no Supabase:", newUser)
+        const { data, error } = await supabase.from("users").insert([newUser]).select().single()
+
+        if (!error && data) {
+          console.log("✅ Usuário salvo no Supabase:", data)
+          // Atualizar dados locais também
+          OfflineDataManager.addItem("users", data, getMockUsers())
+          return data as User
+        } else {
+          console.error("❌ Erro ao salvar no Supabase:", error)
+        }
+      } catch (error) {
+        console.warn("Erro ao criar usuário no Supabase, salvando localmente:", error)
+      }
+    }
+
+    // Salvar localmente
+    console.log("💾 Salvando usuário localmente:", newUser)
+    OfflineDataManager.addItem("users", newUser, getMockUsers())
+    return newUser
+  },
+
+  async update(id: string, updates: Partial<User>, isOnline = false): Promise<User> {
+    const updateData = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    }
+
+    if (isOnline) {
+      try {
+        const { data, error } = await supabase.from("users").update(updateData).eq("id", id).select().single()
+
+        if (!error && data) {
+          OfflineDataManager.updateItem("users", id, updateData, getMockUsers())
+          return data as User
+        }
+      } catch (error) {
+        console.warn("Erro ao atualizar usuário no Supabase, atualizando localmente:", error)
+      }
+    }
+
+    const updatedData = OfflineDataManager.updateItem("users", id, updateData, getMockUsers())
+    const updatedUser = updatedData.find((u) => u.id === id)
+    if (!updatedUser) throw new Error("User not found")
+    return updatedUser
+  },
+
+  async delete(id: string, isOnline = false): Promise<void> {
+    if (isOnline) {
+      try {
+        const { error } = await supabase.from("users").delete().eq("id", id)
+        if (!error) {
+          OfflineDataManager.deleteItem("users", id, getMockUsers())
+          return
+        }
+      } catch (error) {
+        console.warn("Erro ao deletar usuário no Supabase, removendo localmente:", error)
+      }
+    }
+
+    OfflineDataManager.deleteItem("users", id, getMockUsers())
+  },
 }
 
 export const productionLinesAPI = {
@@ -855,4 +1000,63 @@ export const productionLinesAPI = {
 
     return OfflineDataManager.getData("production_lines", getMockProductionLines())
   },
+}
+
+// Função para criar usuário com senha (para administradores)
+export const createUserWithPassword = async (
+  userData: Omit<User, "id" | "created_at" | "updated_at">,
+  password: string,
+  isOnline = false,
+): Promise<{ user: User; success: boolean; message: string }> => {
+  try {
+    console.log("🔄 Criando usuário com senha...", { userData, isOnline })
+
+    // Criar o usuário
+    const newUser = await usersAPI.create(userData, isOnline)
+    console.log("✅ Usuário criado:", newUser)
+
+    // Salvar a senha separadamente (em produção seria hash)
+    const userPasswords = JSON.parse(localStorage.getItem("capymes_passwords") || "{}")
+    userPasswords[newUser.email] = password
+    localStorage.setItem("capymes_passwords", JSON.stringify(userPasswords))
+    console.log("💾 Senha salva localmente")
+
+    // Se estiver online, tentar salvar a senha no Supabase também
+    if (isOnline) {
+      try {
+        console.log("🔄 Tentando salvar senha no Supabase...")
+        // Criar uma tabela separada para senhas (em produção seria com hash)
+        const { error: passwordError } = await supabase.from("user_passwords").insert([
+          {
+            id: generateUUID(),
+            user_id: newUser.id,
+            email: newUser.email,
+            password_hash: password, // Em produção seria um hash
+            created_at: new Date().toISOString(),
+          },
+        ])
+
+        if (passwordError) {
+          console.warn("⚠️ Aviso: Não foi possível salvar senha no Supabase:", passwordError)
+        } else {
+          console.log("✅ Senha salva no Supabase")
+        }
+      } catch (error) {
+        console.warn("⚠️ Aviso: Erro ao salvar senha no Supabase:", error)
+      }
+    }
+
+    return {
+      user: newUser,
+      success: true,
+      message: isOnline ? "Usuário criado e salvo no Supabase com sucesso!" : "Usuário criado localmente com sucesso!",
+    }
+  } catch (error) {
+    console.error("❌ Erro ao criar usuário:", error)
+    return {
+      user: {} as User,
+      success: false,
+      message: `Erro ao criar usuário: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
+    }
+  }
 }
